@@ -86,7 +86,7 @@ router.put('/:id', authenticate, upload.single('image'), async (req, res) => {
     const p = existing.rows[0];
 
     let finalImageUrl = image_url !== undefined ? image_url : p.image_url;
-    let cloudinaryPublicId = p.cloudinary_public_id;
+    let cloudinaryPublicId = req.body.cloudinary_public_id !== undefined ? req.body.cloudinary_public_id : p.cloudinary_public_id;
 
     // New image file uploaded — replace old one on Cloudinary
     if (req.file) {
@@ -152,6 +152,23 @@ router.delete('/:id', authenticate, async (req, res) => {
   } catch (err) {
     console.error('Pastor delete error:', err);
     res.status(500).json({ error: 'Failed to delete pastor.' });
+  }
+});
+
+router.patch('/:id/clear-image', authenticate, async (req, res) => {
+  try {
+    const { cloudinary_public_id } = req.body;
+    if (cloudinary_public_id) {
+      await deleteFromCloudinary(cloudinary_public_id, 'image');
+    }
+    await pool.query(
+      `UPDATE pastors SET image_url = NULL, cloudinary_public_id = NULL, updated_at = NOW() WHERE id = $1`,
+      [req.params.id]
+    );
+    res.json({ message: 'Image removed.' });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to remove image.' });
   }
 });
 
