@@ -4,6 +4,11 @@ const { authenticate } = require('../middleware/auth');
 const router = express.Router();
 const { notifyNewPrayerRequest, notifyPrayerAnswered } = require('../utils/mailer');
 
+function sanitize(str) {
+  if (!str) return str;
+  return String(str).replace(/<[^>]*>/g, '').trim();
+}
+
 // POST /api/prayer — public (submit a prayer request)
 router.post('/', async (req, res) => {
   const { requester_name, email, phone, request_text, is_private } = req.body;
@@ -13,10 +18,10 @@ router.post('/', async (req, res) => {
 
   try {
     const result = await pool.query(
-      `INSERT INTO prayer_requests (requester_name, email, phone, request_text, is_private)
-       VALUES ($1,$2,$3,$4,$5) RETURNING id, requester_name, created_at`,
-      [requester_name, email, phone, request_text, is_private !== false]
-    );
+  `INSERT INTO prayer_requests (requester_name, email, phone, request_text, is_private)
+   VALUES ($1,$2,$3,$4,$5) RETURNING id, requester_name, created_at`,
+  [sanitize(requester_name), email, sanitize(phone), sanitize(request_text), is_private !== false]
+);
     const saved = result.rows[0];
     notifyNewPrayerRequest({ ...req.body, id: saved.id }).catch(() => {});
     res.status(201).json({

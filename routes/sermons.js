@@ -71,7 +71,6 @@ router.get('/all', authenticate, async (req, res) => {
 // ── GET /api/sermons/:id — public ──────────────────────────
 router.get('/:id', async (req, res) => {
   try {
-    await pool.query('UPDATE sermons SET views = views + 1 WHERE id = $1', [req.params.id]);
     const result = await pool.query(
       `SELECT s.*, p.name AS pastor_name
        FROM sermons s
@@ -83,6 +82,16 @@ router.get('/:id', async (req, res) => {
     res.json(result.rows[0]);
   } catch (err) {
     res.status(500).json({ error: 'Failed to fetch sermon.' });
+  }
+});
+
+// ── POST /api/sermons/:id/view — public: register one real play ──
+router.post('/:id/view', async (req, res) => {
+  try {
+    await pool.query('UPDATE sermons SET views = views + 1 WHERE id = $1', [req.params.id]);
+    res.json({ message: 'View recorded.' });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to record view.' });
   }
 });
 
