@@ -12,7 +12,7 @@
 const express = require('express');
 const pool = require('../db/pool');
 const { authenticate } = require('../middleware/auth');
-const { upload, uploadImage, deleteFromCloudinary } = require('../middleware/upload');
+const { upload, uploadImage, deleteFromCloudinary, validateFileSize } = require('../middleware/upload');
 const router = express.Router();
 
 // ── GET /api/gallery — public ───────────────────────────────
@@ -83,6 +83,11 @@ router.post('/', authenticate, upload.single('image'), async (req, res) => {
   // If a file was uploaded, push it to Cloudinary
   if (req.file) {
     try {
+      validateFileSize(req.file);
+    } catch (err) {
+      return res.status(400).json({ error: err.message });
+    }
+    try {
       const result = await uploadImage(req.file.buffer, 'lighthouse/gallery');
       finalImageUrl = result.secure_url;
       cloudinaryPublicId = result.public_id;
@@ -142,6 +147,11 @@ router.put('/:id', authenticate, upload.single('image'), async (req, res) => {
 
     // If a new file is uploaded, replace the old one on Cloudinary
     if (req.file) {
+      try {
+        validateFileSize(req.file);
+      } catch (err) {
+        return res.status(400).json({ error: err.message });
+      }
       try {
         const result = await uploadImage(req.file.buffer, 'lighthouse/gallery');
         finalImageUrl = result.secure_url;

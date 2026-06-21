@@ -97,6 +97,27 @@ async function deleteFromCloudinary(publicId, resource_type = 'image') {
   }
 }
 
+const SIZE_LIMITS = {
+  image: 10 * 1024 * 1024,
+  audio: 100 * 1024 * 1024,
+  video: 500 * 1024 * 1024,
+};
+
+function getFileCategory(mimetype) {
+  if (mimetype.startsWith('image/')) return 'image';
+  if (mimetype.startsWith('audio/')) return 'audio';
+  if (mimetype.startsWith('video/')) return 'video';
+  return null;
+}
+
+function validateFileSize(file) {
+  const category = getFileCategory(file.mimetype);
+  const limit = SIZE_LIMITS[category];
+  if (!limit || file.size > limit) {
+    throw new Error(`File exceeds the ${limit ? (limit/1024/1024)+'MB' : 'allowed'} size limit for ${category || 'this file type'}.`);
+  }
+}
+
 // ── Convenience upload functions per resource type ──────────
 
 async function uploadImage(fileBuffer, folder = 'lighthouse/images') {
@@ -127,9 +148,10 @@ async function uploadVideo(fileBuffer, folder = 'lighthouse/sermons/video') {
 // Multiple files: upload.fields([{ name:'audio', maxCount:1 }, { name:'thumbnail', maxCount:1 }])
 
 module.exports = {
-  upload,           // multer instance — use as route middleware
+  upload,
   uploadImage,
   uploadAudio,
   uploadVideo,
   deleteFromCloudinary,
+  validateFileSize,
 };

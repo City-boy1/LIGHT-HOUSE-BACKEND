@@ -62,7 +62,7 @@ app.use(cors({
     if (allowedOrigins.includes(origin)) return callback(null, true);
     callback(new Error(`CORS: Origin ${origin} not allowed`));
   },
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
   credentials: true,
 }));
@@ -187,7 +187,13 @@ app.listen(PORT, async () => {
 
   // Run once on startup, then every 24 hours
   await eventsRouter.runAutoArchive();
-  setInterval(eventsRouter.runAutoArchive, 24 * 60 * 60 * 1000);
+  setInterval(async () => {
+  try {
+    await eventsRouter.runAutoArchive();
+  } catch (err) {
+    console.error('[auto-archive] Retry-safe failure:', err.message);
+  }
+}, 24 * 60 * 60 * 1000);
 });
 
 module.exports = app;

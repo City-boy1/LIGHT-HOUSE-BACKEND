@@ -3,7 +3,7 @@ const pool = require('../db/pool');
 const { authenticate } = require('../middleware/auth');
 const router = express.Router();
 
-// GET /api/settings — public (returns all settings as object)
+// GET /api/settings — public
 router.get('/', async (req, res) => {
   try {
     const result = await pool.query('SELECT key, value FROM church_settings');
@@ -15,7 +15,7 @@ router.get('/', async (req, res) => {
   }
 });
 
-// GET /api/settings/full — admin (includes labels)
+// GET /api/settings/full — admin
 router.get('/full', authenticate, async (req, res) => {
   try {
     const result = await pool.query('SELECT * FROM church_settings ORDER BY key ASC');
@@ -25,13 +25,12 @@ router.get('/full', authenticate, async (req, res) => {
   }
 });
 
-// PUT /api/settings — admin (update one or many keys)
+// PUT /api/settings — admin
 router.put('/', authenticate, async (req, res) => {
-  const updates = req.body; // { key: value, key: value }
+  const updates = req.body;
   if (!updates || Object.keys(updates).length === 0) {
     return res.status(400).json({ error: 'No settings provided.' });
   }
-
   try {
     const promises = Object.entries(updates).map(([key, value]) =>
       pool.query(
@@ -66,7 +65,6 @@ router.post('/service-times', authenticate, async (req, res) => {
   if (!day_of_week || !service_name || !start_time) {
     return res.status(400).json({ error: 'Day, service name, and start time required.' });
   }
-
   try {
     const result = await pool.query(
       `INSERT INTO service_times (day_of_week, service_name, start_time, end_time, location_detail, description, display_order)

@@ -2,7 +2,7 @@ const express = require('express');
 const pool = require('../db/pool');
 const { authenticate } = require('../middleware/auth');
 const router = express.Router();
-const { upload, uploadImage, deleteFromCloudinary } = require('../middleware/upload');
+const { upload, uploadImage, deleteFromCloudinary, validateFileSize } = require('../middleware/upload');
 const { sendMemberWelcome } = require('../utils/mailer');
 
 // GET /api/members — all members (admin)
@@ -10,9 +10,11 @@ router.get('/', authenticate, async (req, res) => {
   try {
     const { group, status, search } = req.query;
     let query = `
-      SELECT m.*, mi.name as ministry_name
+      SELECT m.*, mi.name as ministry_name,
+        COALESCE(array_agg(gm.group_id) FILTER (WHERE gm.group_id IS NOT NULL), '{}') AS group_ids
       FROM members m
       LEFT JOIN ministries mi ON m.ministry_id = mi.id
+      LEFT JOIN group_members gm ON gm.member_id = m.id
       WHERE 1=1
     `;
     const params = [];
@@ -20,12 +22,69 @@ router.get('/', authenticate, async (req, res) => {
     if (status) { params.push(status); query += ` AND m.membership_status = $${params.length}`; }
     if (search) { params.push(`%${search}%`); query += ` AND (m.full_name ILIKE $${params.length} OR m.email ILIKE $${params.length} OR m.phone ILIKE $${params.length})`; }
 
-    query += ` ORDER BY m.full_name ASC`;
+    query += ` GROUP BY m.id, mi.name ORDER BY m.full_name ASC`;
     const result = await pool.query(query, params);
     res.json(result.rows);
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Failed to fetch members.' });
+  }
+});
+
+// GET /api/members/monthly-stats — home panel mini stats
+router.get('/monthly-stats', authenticate, async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT
+        COUNT(*) FILTER (
+          WHERE activity_type = 'joined'
+          AND DATE_TRUNC('month', created_at) = DATE_TRUNC('month', NOW())
+        ) AS joined_this_month,
+        COUNT(*) FILTER (
+          WHERE activity_type = 'baptized'
+          AND DATE_TRUNC('month', created_at) = DATE_TRUNC('month', NOW())
+        ) AS baptized_this_month,
+        COUNT(*) FILTER (
+          WHERE activity_type = 'promoted'
+          AND DATE_TRUNC('month', created_at) = DATE_TRUNC('month', NOW())
+        ) AS promoted_this_month,
+        COUNT(*) FILTER (
+          WHERE activity_type = 'status_change'
+          AND new_value = 'inactive'
+          AND DATE_TRUNC('month', created_at) = DATE_TRUNC('month', NOW())
+        ) AS inactive_this_month
+      FROM member_activity
+    `);
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to fetch monthly stats.' });
+  }
+});
+
+// GET /api/members/activity — recent member activity feed (admin)
+router.get('/activity', authenticate, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT 
+         ma.id,
+         ma.activity_type,
+         ma.old_value,
+         ma.new_value,
+         ma.note,
+         ma.created_at,
+         m.full_name AS member_name,
+         m.id AS member_id,
+         m.image_url
+       FROM member_activity ma
+       LEFT JOIN members m ON ma.member_id = m.id
+       ORDER BY ma.created_at DESC
+       LIMIT 30`,
+    );
+    res.json(result.rows);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to fetch member activity.' });
   }
 });
 
@@ -65,6 +124,11 @@ router.post('/', authenticate, upload.single('image'), async (req, res) => {
 
   let image_url = null, cloudinary_public_id = null;
   if (req.file) {
+    try {
+      validateFileSize(req.file);
+    } catch (err) {
+      return res.status(400).json({ error: err.message });
+    }
     try {
       const result = await uploadImage(req.file.buffer, 'lighthouse/members');
       image_url = result.secure_url;
@@ -109,6 +173,11 @@ router.put('/:id', authenticate, upload.single('image'), async (req, res) => {
   let cloudinary_public_id = req.body.cloudinary_public_id || null;
 
   if (req.file) {
+    try {
+      validateFileSize(req.file);
+    } catch (err) {
+      return res.status(400).json({ error: err.message });
+    }
     // Delete old image first
     if (cloudinary_public_id) await deleteFromCloudinary(cloudinary_public_id);
     try {

@@ -14,7 +14,7 @@
 const express = require('express');
 const pool = require('../db/pool');
 const { authenticate } = require('../middleware/auth');
-const { upload, uploadImage, uploadAudio, uploadVideo, deleteFromCloudinary } = require('../middleware/upload');
+const { upload, uploadImage, uploadAudio, uploadVideo, deleteFromCloudinary, validateFileSize } = require('../middleware/upload');
 const router = express.Router();
 
 // multer field config for sermons: audio + video + thumbnail in one request
@@ -108,6 +108,10 @@ router.post('/', authenticate, sermonUpload, async (req, res) => {
   let thumbnailCloudId = null;
 
   try {
+    if (req.files?.audio?.[0])     validateFileSize(req.files.audio[0]);
+    if (req.files?.video?.[0])     validateFileSize(req.files.video[0]);
+    if (req.files?.thumbnail?.[0]) validateFileSize(req.files.thumbnail[0]);
+
     // Upload audio if provided
     if (req.files?.audio?.[0]) {
       const r = await uploadAudio(req.files.audio[0].buffer, 'lighthouse/sermons/audio');
@@ -189,6 +193,10 @@ router.put('/:id', authenticate, sermonUpload, async (req, res) => {
     let videoCloudId      = s.video_cloudinary_id;
     let thumbnailCloudId  = s.thumbnail_cloudinary_id;
 
+    if (req.files?.audio?.[0])     validateFileSize(req.files.audio[0]);
+    if (req.files?.video?.[0])     validateFileSize(req.files.video[0]);
+    if (req.files?.thumbnail?.[0]) validateFileSize(req.files.thumbnail[0]);
+
     // Replace audio
     if (req.files?.audio?.[0]) {
       const r = await uploadAudio(req.files.audio[0].buffer, 'lighthouse/sermons/audio');
@@ -242,7 +250,8 @@ router.put('/:id', authenticate, sermonUpload, async (req, res) => {
     res.json(result.rows[0]);
   } catch (err) {
     console.error('Sermon update error:', err);
-    res.status(500).json({ error: 'Failed to update sermon.' });
+    const status = err.message?.includes('size limit') ? 400 : 500;
+    res.status(status).json({ error: err.message?.includes('size limit') ? err.message : 'Failed to update sermon.' });
   }
 });
 
@@ -271,6 +280,52 @@ router.delete('/:id', authenticate, async (req, res) => {
   } catch (err) {
     console.error('Sermon delete error:', err);
     res.status(500).json({ error: 'Failed to delete sermon.' });
+  }
+});
+
+// ── GET /api/sermons/series — admin: list all series with counts ──
+router.get('/series/list', authenticate, async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT series_name,
+             COUNT(*) AS sermon_count,
+             MAX(sermon_date) AS latest_date,
+             MIN(thumbnail_url) AS cover_url
+      FROM sermons
+      WHERE series_name IS NOT NULL AND series_name != ''
+      GROUP BY series_name
+      ORDER BY latest_date DESC
+    `);
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to fetch series.' });
+  }
+});
+
+// ── DELETE /api/sermons/:id/media — delete one media slot only ──
+router.delete('/:id/media', authenticate, async (req, res) => {
+  const { type } = req.query; // type = 'audio' | 'video' | 'thumbnail'
+  if (!['audio','video','thumbnail'].includes(type)) {
+    return res.status(400).json({ error: 'Invalid media type.' });
+  }
+  try {
+    const existing = await pool.query('SELECT * FROM sermons WHERE id = $1', [req.params.id]);
+    if (!existing.rows.length) return res.status(404).json({ error: 'Sermon not found.' });
+    const s = existing.rows[0];
+
+    const urlCol   = `${type}_url`;
+    const cloudCol = `${type}_cloudinary_id`;
+    const resourceType = type === 'thumbnail' ? 'image' : 'video';
+
+    if (s[cloudCol]) await deleteFromCloudinary(s[cloudCol], resourceType);
+
+    await pool.query(
+      `UPDATE sermons SET ${urlCol} = NULL, ${cloudCol} = NULL, updated_at = NOW() WHERE id = $1`,
+      [req.params.id]
+    );
+    res.json({ message: `${type} removed.` });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to remove media.' });
   }
 });
 

@@ -1,6 +1,7 @@
 const express = require('express');
 const pool = require('../db/pool');
 const { authenticate } = require('../middleware/auth');
+const { deleteFromCloudinary } = require('../middleware/upload');
 const router = express.Router();
 
 // Simple sanitizer — strips HTML tags from strings
@@ -63,23 +64,27 @@ router.get('/:id', async (req, res) => {
 router.post('/', authenticate, async (req, res) => {
   const {
     title, description, event_date, end_date, start_time, end_time,
-    location, image_url, cloudinary_public_id, category,
+    location, image_url, cloudinary_public_id, video_url, category,
     is_featured, is_published, registration_link
   } = req.body;
 
   if (!title || !event_date) return res.status(400).json({ error: 'Title and start date are required.' });
   if (end_date && end_date < event_date) return res.status(400).json({ error: 'End date cannot be before start date.' });
 
+  if (video_url && video_url.trim()) {
+    try { new URL(video_url.trim()); } catch { return res.status(400).json({ error: 'Invalid video URL.' }); }
+  }
+
   try {
     const result = await pool.query(
       `INSERT INTO events (title, description, event_date, end_date, start_time, end_time,
-       location, image_url, cloudinary_public_id, category, is_featured, is_published,
+       location, image_url, cloudinary_public_id, video_url, category, is_featured, is_published,
        registration_link, created_by)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING *`,
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) RETURNING *`,
       [
         sanitize(title), sanitize(description), event_date, end_date || null,
         start_time || null, end_time || null, sanitize(location),
-        image_url || null, cloudinary_public_id || null,
+        image_url || null, cloudinary_public_id || null, video_url?.trim() || null,
         sanitize(category) || 'general', is_featured || false,
         is_published !== false, registration_link || null, req.admin.id
       ]
@@ -95,25 +100,28 @@ router.post('/', authenticate, async (req, res) => {
 router.put('/:id', authenticate, async (req, res) => {
   const {
     title, description, event_date, end_date, start_time, end_time,
-    location, image_url, cloudinary_public_id, category,
+    location, image_url, cloudinary_public_id, video_url, category,
     is_featured, is_published, is_archived, registration_link
   } = req.body;
 
   if (end_date && event_date && end_date < event_date) {
     return res.status(400).json({ error: 'End date cannot be before start date.' });
   }
+  if (video_url && video_url.trim()) {
+    try { new URL(video_url.trim()); } catch { return res.status(400).json({ error: 'Invalid video URL.' }); }
+  }
 
   try {
     const result = await pool.query(
       `UPDATE events SET title=$1, description=$2, event_date=$3, end_date=$4,
        start_time=$5, end_time=$6, location=$7, image_url=$8, cloudinary_public_id=$9,
-       category=$10, is_featured=$11, is_published=$12, is_archived=$13,
-       registration_link=$14, updated_at=NOW()
-       WHERE id=$15 RETURNING *`,
+       video_url=$10, category=$11, is_featured=$12, is_published=$13, is_archived=$14,
+       registration_link=$15, updated_at=NOW()
+       WHERE id=$16 RETURNING *`,
       [
         sanitize(title), sanitize(description), event_date, end_date || null,
         start_time || null, end_time || null, sanitize(location),
-        image_url || null, cloudinary_public_id || null,
+        image_url || null, cloudinary_public_id || null, video_url?.trim() || null,
         sanitize(category), is_featured, is_published,
         is_archived || false, registration_link || null, req.params.id
       ]
@@ -126,12 +134,29 @@ router.put('/:id', authenticate, async (req, res) => {
   }
 });
 
+// PATCH /api/events/:id/clear-image — remove image only
+router.patch('/:id/clear-image', authenticate, async (req, res) => {
+  try {
+    const { cloudinary_public_id } = req.body;
+    if (cloudinary_public_id) {
+      await deleteFromCloudinary(cloudinary_public_id, 'image');
+    }
+    await pool.query(
+      `UPDATE events SET image_url = NULL, cloudinary_public_id = NULL, updated_at = NOW() WHERE id = $1`,
+      [req.params.id]
+    );
+    res.json({ message: 'Image removed.' });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to remove image.' });
+  }
+});
+
 // DELETE /api/events/:id — admin
 router.delete('/:id', authenticate, async (req, res) => {
   try {
     const existing = await pool.query('SELECT cloudinary_public_id FROM events WHERE id=$1', [req.params.id]);
     if (existing.rows.length && existing.rows[0].cloudinary_public_id) {
-      const { deleteFromCloudinary } = require('../middleware/upload');
       await deleteFromCloudinary(existing.rows[0].cloudinary_public_id, 'image');
     }
     await pool.query('DELETE FROM events WHERE id = $1', [req.params.id]);

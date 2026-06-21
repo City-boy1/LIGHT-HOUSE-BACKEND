@@ -4,9 +4,17 @@ const jwt = require('jsonwebtoken');
 const pool = require('../db/pool');
 const { authenticate } = require('../middleware/auth');
 const router = express.Router();
+const rateLimit = require('express-rate-limit');
 
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 6,
+  message: { error: 'Too many login attempts. Try again in 15 minutes.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
 // POST /api/auth/login
-router.post('/login', async (req, res) => {
+router.post('/login', loginLimiter, async (req, res) => {
   const { email, password } = req.body;
   if (!email || !password) {
     return res.status(400).json({ error: 'Email and password required.' });
@@ -101,6 +109,44 @@ router.post('/create-admin', authenticate, async (req, res) => {
     if (err.code === '23505') {
       return res.status(409).json({ error: 'An admin with this email already exists.' });
     }
+    res.status(500).json({ error: 'Server error.' });
+  }
+});
+
+// GET /api/auth/admins (superadmin only)
+router.get('/admins', authenticate, async (req, res) => {
+  if (req.admin.role !== 'superadmin') {
+    return res.status(403).json({ error: 'Only superadmin can view admin accounts.' });
+  }
+  try {
+    const result = await pool.query(
+      'SELECT id, name, email, role, created_at FROM admins ORDER BY created_at ASC'
+    );
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to fetch admins.' });
+  }
+});
+
+// DELETE /api/auth/admins/:id (superadmin only)
+router.delete('/admins/:id', authenticate, async (req, res) => {
+  if (req.admin.role !== 'superadmin') {
+    return res.status(403).json({ error: 'Only superadmin can delete admin accounts.' });
+  }
+  if (req.admin.id === req.params.id) {
+    return res.status(400).json({ error: 'You cannot delete your own account.' });
+  }
+  try {
+    const result = await pool.query(
+      'DELETE FROM admins WHERE id = $1 RETURNING id',
+      [req.params.id]
+    );
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Admin not found.' });
+    }
+    res.json({ message: 'Admin deleted successfully.' });
+  } catch (err) {
+    console.error(err);
     res.status(500).json({ error: 'Server error.' });
   }
 });
